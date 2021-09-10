@@ -1,4 +1,3 @@
-
 # focalgdm3
 
 _**This script assumes that the Installation of Ubuntu 20.xx/21.xx is a fresh install. If you tried to change the GDM background with someother scripts, you first need to reset those changes. Other scripts may have the option --reset.**_
@@ -15,9 +14,7 @@ this script is to change the login screen background of Ubuntu 20.xx/21.xx only.
 
 you can download the `focalgdm3` file via command line
 
-    wget -qO - https://github.com/PRATAP-KUMAR/focalgdm3/archive/master.tar.gz | tar zx --strip-components=1 focalgdm3-master/focalgdm3
-
-Once you downloaded the script `focalgdm3`. cd to the downloaded script file.
+    curl -O https://raw.githubusercontent.com/agail/focalgdm3/master/focalgdm3; chmod +x focalgdm3
 
 run the below command with root priviliges and follow the prompts.
 `./focalgdm3 --set`
@@ -35,3 +32,4 @@ run the below command with root priviliges
 ![result of color](https://i.stack.imgur.com/KmliD.png)
 
 ![result of color with OSK](https://i.stack.imgur.com/TFWP5.png)
+
