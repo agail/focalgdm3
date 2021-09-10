@@ -1,240 +1,192 @@
 #!/bin/bash
+#
+#  author: PRATAP KUMAR (https://github.com/PRATAP-KUMAR)
+# version: 210910
+# changes: v.210910 (agail) rewrote to use functions, added option to install dependency
+#                   changed invocation, now uses --set or --reset
+#                   added some colorized output
+#
 
-codename=$(cat /etc/os-release | grep UBUNTU_CODENAME | cut -d = -f 2)
+dist=$(awk -F "[=]" '/^UBUNTU/ {print $2}' /etc/os-release)
+manpkg=libglib2.0-dev
+src=/usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+dst=/usr/local/share/gnome-shell/theme/focalgdm3
+pfx=/org/gnome/shell/theme
 
-if [ "$codename" == "focal" ] || [ "$codename" == "groovy" ] || ["$codename" == "hirsute" ]
-then
-source="/usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource"
-else
-echo "
-----------------------------------------
-Sorry, Script is only for Ubuntu 20.xx
-Exiting...
-----------------------------------------"
-exit 1
-fi
+# --- begin functions --- #
 
-if [ "$UID" != "0" ]
-then
-echo -e "This Script must be run with root privileges; example: \"sudo ./focalgdm3\""
-exit 1
-fi
+f_usage () {
+cat <<-EOFU
+$(sed -ne '/^#$/,/^$/p' $0)
+ 
+ Customize Ubuntu Focal, Groovy and Hirsute (2[0-1].xx) login screen background
 
-pkg=$(dpkg -l | grep libglib2.0-dev >/dev/null && echo "yes" || echo "no")
-if [ "$pkg" == "no" ]
-then
-echo "
------------------------------------------------------------------------------------------------------
-Sorry, the package 'libglib2.0-dev' is not installed. Install the package and then run this Script.
------------------------------------------------------------------------------------------------------"
-echo "Would you like to install libglib2.0-dev? y/N"
-read ans
-  if [ "$ans" == "y" ] || [ "$ans" == "Y" ]; then
-    apt install libglib2.0-dev
-  else
+ ${0##*/} --help        - This help
+            --set         - Set custom backgroud color or image
+            --reset       - Reset to default theme settings
+
+EOFU
+}
+
+f_prechecks () {        # Run pre checks
+if [[ ! ${dist} =~ ^(focal|groovyy|hirsute)$ ]]; then
+    f_usage
+    echo " -----------------------------------------"
+    echo -e "\e[91m  Sorry, '${dist}' is untested/not supported\e[m"
+    echo "  Exiting..."
+    echo " -----------------------------------------"
     exit 1
-  fi
+elif [ ! -r /usr/share/gnome-shell/gdm3-theme.gresource ]; then
+    echo -e "\n\e[91m gdm3-theme.gresource not found, exiting\n\e[m"
+    exit 1
+elif [ ! "$(dpkg -l | awk "/${manpkg}:/ && /^ii/")" ]; then
+    echo " ----------------------------------------------"
+    echo -e "  \e[33mPackage '${manpkg}' is not installed.\e[m"
+    echo " ----------------------------------------------"
+    read -rp " Install now? [y/n]: " instpkg
+    if [[ ! "${instpkg}" == "y" ]]; then
+        echo -e " \e[91mSkipping install and exiting.\e[m\n"
+        exit 1
+    else
+        echo; sudo apt update >/dev/null 2>&1; sudo apt install ${manpkg}
+        if [ $? -ne 0 ]; then
+            echo -e "\e[91m   Something went wrong installing \e[m${manpkg}\e[91m, check dpkg.log\e[m\n"
+            exit 1
+        fi
+    fi
 fi
+}
 
-############################################################################################
-case "$1" in ###############################################################################
-############################################################################################
---set)
-############################################################################################
-
-echo "
--------------------------------------------------------------------------------------------------------
-Please note that after setting login screen background,
->>>>>>>>> Reboot is highly recommended to see the changes <<<<<<<<<<<<
-
-Do you want to proceed now? [Yes/no] Type n to exit, or press enter to proceed.
--------------------------------------------------------------------------------------------------------"
-read answer
-
-if [ "$answer" == "n" ] || [ "$answer" == "N" ]
-then
-echo "Exiting..."
-exit 1
+f_check_uid () {        # Check sudo
+if [ "${UID}" != "0" ]; then
+    echo -e "\n\e[93m ${0##*/} must be run with sudo\e[m\n"
+    exit 1
 fi
+}
 
-echo "
-Please Choose any one number from below.
--------------
-1. for Image
-2. for Color
--------------"
-read a
-
-if [ -z $a ]
-then
-echo "Option is not selected.
-Exiting..."
-exit 1
-fi
-
-if [ "$a" == "1" ]
-then
-echo "Enter Image Path for Login Screen
-----------------------------------------------------
-Example1: /usr/share/backgrounds/2.jpg
-Example2: /usr/local/share/backgrounds/spaceship.png
-Example3: /home/focal/Downloads/myBG.jpeg
-----------------------------------------------------"
-read b
-
-elif [ "$a" == "2" ]
-then
-echo "
-Enter Hex Color Code for Login Screen (you may note down colors of your choice from this link https://www.color-hex.com/)
--------------------------------------------------------------------------------------------------------------------------
-Example1: #00ff00
-Example2: #fca
-Example3: #456789
-Example4: #123
-Example5: #FF00FF
--------------------------------------------------------------------------------------------------------------------------"
-read c
-fi
-
-if [ -z $b ] && [ -z $c ]
-then
-echo "Input is not Provided.
-Exiting..."
-exit 1
-fi
-
-if [ -z $c ]
-then
-color="#042320"
+f_verify_input () {     # Verify input
+if ! [ -f "$1" ] && ! [[ $1 =~ ^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$ ]]; then
+    echo -e "\n\e[91m '$1' is not a valid /absolute/Image/path or a valid 'HEX Color Code'"
+    echo -e " Exiting without any changes..\e[m\n"
+    exit 1
+elif [ -f "$1" ]; then
+    color='#042320'
+    img="'file://$1'"
 else
-color="$c"
+    color=$1
 fi
+}
 
-if ! [ -z $c ]
-then
-    	if ! [[ $c =~ ^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$ ]]; then
-    	echo "
-------------------------------------------------------------------------------------------------------------
-    	Sorry it is not a valid Hex color, Please choose the valid HEX color first and then run this script.
-------------------------------------------------------------------------------------------------------------"
-    	exit 1
-    	fi
-fi
+f_extract () {          # Extract all files from theme
+while read -r item; do
+    if [ ! -d "$(dirname ${dst}/${item#$pfx/})" ]; then mkdir -p $(dirname ${dst}/${item#$pfx/}); fi
+    if [[ ${item} =~ gdm3.css ]]; then gresource extract ${src} ${item} > $(dirname ${dst}/${item#$pfx/})/original.css; else
+    gresource extract ${src} ${item} > $(dirname ${dst}/${item#$pfx/})/$(basename ${item#$pfx/}); fi
+done< <( gresource list $src )
+}
 
-if ! [ -z $b ]
-then
-	if ! [ -e $b ]; then
-	echo "
----------------------------------------------------------------------------------------------------
-Image path you entered does not exist, script defined background color is going to be used for now.
-Please notedown the correct file path of the Image and then run this script.
----------------------------------------------------------------------------------------------------"
-	fi
-fi
-
-prefix="/org/gnome/shell/theme"
-dest="/usr/local/share/gnome-shell/theme/focalgdm3"
-
-install -D /dev/null $dest/gdm3.css
-install -D /dev/null $dest/focalgdm3.gresource.xml
-install -d $dest/icons/scalable/actions
-install -d $dest/icons/scalable/status
-
-gresource extract $source $prefix/gdm3.css > $dest/original.css
-gresource extract $source $prefix/checkbox.svg > $dest/checkbox.svg
-gresource extract $source $prefix/checkbox-off.svg > $dest/checkbox-off.svg
-gresource extract $source $prefix/checkbox-focused.svg > $dest/checkbox-focused.svg
-gresource extract $source $prefix/checkbox-off-focused.svg > $dest/checkbox-off-focused.svg
-gresource extract $source $prefix/toggle-on.svg > $dest/toggle-on.svg
-gresource extract $source $prefix/toggle-off.svg > $dest/toggle-off.svg
-gresource extract $source $prefix/icons/scalable/actions/pointer-drag-symbolic.svg > $dest/icons/scalable/actions/pointer-drag-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/keyboard-enter-symbolic.svg > $dest/icons/scalable/status/keyboard-enter-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/keyboard-hide-symbolic.svg > $dest/icons/scalable/status/keyboard-hide-symbolic.svg
-gresource extract $source $prefix/icons/scalable/actions/pointer-secondary-click-symbolic.svg > $dest/icons/scalable/actions/pointer-secondary-click-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/keyboard-shift-filled-symbolic.svg > $dest/icons/scalable/status/keyboard-shift-filled-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/keyboard-caps-lock-filled-symbolic.svg > $dest/icons/scalable/status/keyboard-caps-lock-filled-symbolic.svg
-gresource extract $source $prefix/icons/scalable/actions/pointer-primary-click-symbolic.svg > $dest/icons/scalable/actions/pointer-primary-click-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/keyboard-layout-filled-symbolic.svg > $dest/icons/scalable/status/keyboard-layout-filled-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/eye-not-looking-symbolic.svg > $dest/icons/scalable/status/eye-not-looking-symbolic.svg
-gresource extract $source $prefix/icons/scalable/actions/pointer-double-click-symbolic.svg > $dest/icons/scalable/actions/pointer-double-click-symbolic.svg
-gresource extract $source $prefix/icons/scalable/status/eye-open-negative-filled-symbolic.svg > $dest/icons/scalable/status/eye-open-negative-filled-symbolic.svg
-
-echo '@import url("resource:///org/gnome/shell/theme/original.css");
+f_gen_css () {          # Generate css file
+cat <<-EOFC > ${dst}/gdm3.css
+'@import url("resource:///org/gnome/shell/theme/original.css");
   #lockDialogGroup {
-  background: '$color' url(file://'$b');
+  background: '${color}' url('${img}');
   background-repeat: no-repeat;
   background-size: cover;
-  background-position: center; }' > $dest/gdm3.css
+  background-position: center; }
+EOFC
+}
 
-echo '<?xml version="1.0" encoding="UTF-8"?>
+f_gen_xml () {          # Generate xml file
+cat <<-EOFX > ${dst}/focalgdm3.gresource.xml
+<?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/org/gnome/shell/theme">
-    <file>original.css</file>
-    <file>gdm3.css</file>
-    <file>toggle-off.svg</file>
-    <file>checkbox-off.svg</file>
-    <file>toggle-on.svg</file>
-    <file>checkbox-off-focused.svg</file>
-    <file>checkbox-focused.svg</file>
-    <file>checkbox.svg</file>
-    <file>icons/scalable/actions/pointer-drag-symbolic.svg</file>
-    <file>icons/scalable/status/keyboard-enter-symbolic.svg</file>
-    <file>icons/scalable/status/keyboard-hide-symbolic.svg</file>
-    <file>icons/scalable/actions/pointer-secondary-click-symbolic.svg</file>
-    <file>icons/scalable/status/keyboard-shift-filled-symbolic.svg</file>
-    <file>icons/scalable/status/keyboard-caps-lock-filled-symbolic.svg</file>
-    <file>icons/scalable/actions/pointer-primary-click-symbolic.svg</file>
-    <file>icons/scalable/status/keyboard-layout-filled-symbolic.svg</file>
-    <file>icons/scalable/status/eye-not-looking-symbolic.svg</file>
-    <file>icons/scalable/actions/pointer-double-click-symbolic.svg</file>
-    <file>icons/scalable/status/eye-open-negative-filled-symbolic.svg</file>
+  $(list-files)
   </gresource>
-</gresources>' > $dest/focalgdm3.gresource.xml
+</gresources>
+EOFX
+}
 
-cd $dest
-glib-compile-resources focalgdm3.gresource.xml
-mv focalgdm3.gresource ..
-rm -r $dest
+list-files () {         # Feed xml generation with extracted files
+while read -r file; do
+    echo "     <file>${file/$dst\/}</file>"
+done < <( find ${dst} -type f -print | sort )
+}
+
+f_compile () {          # Compile new gresource
+glib-compile-resources --sourcedir ${dst} --target ${dst%/*}/focalgdm3.gresource ${dst}/focalgdm3.gresource.xml
+} 
+
+f_install () {          # Install new gresrouce
 update-alternatives --quiet --install /usr/share/gnome-shell/gdm3-theme.gresource gdm3-theme.gresource /usr/local/share/gnome-shell/theme/focalgdm3.gresource 0
 update-alternatives --quiet --set gdm3-theme.gresource /usr/local/share/gnome-shell/theme/focalgdm3.gresource
 
-check=$(update-alternatives --query gdm3-theme.gresource | grep Value | grep /usr/local/share/gnome-shell/theme/focalgdm3.gresource >/dev/null && echo "pass" || echo "fail")
-if [ "$check" == "pass" ]
-then
-echo "
-				     		---------
-						|Success|
-						---------"
+check=$(update-alternatives --query gdm3-theme.gresource | awk '/^Value/ {print $2}')
+if [ "${check}" == "${dst}.gresource" ]; then
+    echo -e "\e[32m"
+    echo "                                      ---------"
+    echo "                                      |Success|"
+    echo "                                      ---------"
+    echo -e "\e[m                      Changes will be effective after a Reboot"
+    echo
+    rm -r ${dst}
 else
-echo Failure
-exit 1
+    echo Failure
+    exit 1
 fi
-;;
-############################################################################################
---reset) ###################################################################################
-############################################################################################
-
-if [ -e /usr/local/share/gnome-shell/theme/focalgdm3.gresource ]
-then
+}
+ 
+f_reset () {            # Reset cutomizations to default
 rm /usr/local/share/gnome-shell/theme/focalgdm3.gresource
-update-alternatives --quiet --set gdm3-theme.gresource "$source"
-cd /usr/local/share
+update-alternatives --quiet --set gdm3-theme.gresource "${src}"
+pushd /usr/local/share >/dev/null
 rmdir --ignore-fail-on-non-empty -p gnome-shell/theme
-echo "
-				     		---------------
-						|Reset Success|
-						---------------"
-else
-echo "
------------------------------------------------------------------------------
-No need, Already Reset. (or unlikely background is not set using this Script.)
------------------------------------------------------------------------------"
-exit 1
-fi
-;;
-############################################################################################
-*) #########################################################################################
-############################################################################################
-echo -e "\nUse the parameter '--set' or '--reset'; example: './focalgdm3 --set' or './focalgdm3 --reset'\n"
-exit 1
+popd >/dev/null
+cat <<- EOFR
+$(echo -e "\e[32m")
+          ------------------
+          |Reset Successful|
+          ------------------ $(echo -e "\e[m")
+ Changes will be effective after a Reboot
+
+EOFR
+exit 0
+}
+
+# --- end functions --- #
+
+f_prechecks
+
+case "$1" in 
+    --help)
+        f_usage                 # Show usage
+        exit 1
+    ;;
+    --set)
+        f_check_uid             # Check sudo
+        read -e -rp "Enter full path to image (tab complete) or enter HEXColorCode including #: " var
+        f_verify_input ${var}   # Verify image path or hexcolor input
+        f_extract               # Extract css and svg's from theme Gvariant DB
+        f_gen_css               # Generate login background css
+        f_gen_xml               # Generate gresource xml
+        f_compile               # Compile gresource xml
+        f_install               # Install compiled gresource
+    ;;
+    --reset)
+        if ! [ -f /usr/local/share/gnome-shell/theme/focalgdm3.gresource ]; then
+            echo " ------------------------------------------------------------------------------ "
+            echo " No need, Already Reset. (or unlikely background is not set using this Script.) "
+            echo " ------------------------------------------------------------------------------ "
+            exit 0
+        else
+            f_check_uid         # Check sudo
+            f_reset             # Reset custom settings to theme defaults
+            exit 0
+        fi
+    ;;
+    "")
+        echo "${0##/*} --help for details"
+        exit 1
+    ;;
 esac
+
